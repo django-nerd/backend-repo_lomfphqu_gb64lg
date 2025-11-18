@@ -1,6 +1,8 @@
 import os
-from fastapi import FastAPI
+from datetime import datetime
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
@@ -11,6 +13,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Ensure uploads directory exists and mount it for static serving
+UPLOAD_DIR = os.path.join(os.getcwd(), 'uploads')
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 @app.get("/")
 def read_root():
@@ -63,6 +70,31 @@ def test_database():
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+
+@app.post("/api/upload-photo")
+async def upload_photo(file: UploadFile = File(...)):
+    """Accept an image upload and store it locally; returns a public URL."""
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+
+    ext = os.path.splitext(file.filename or "")[1] or ".png"
+    safe_ext = ext if len(ext) <= 5 else ".png"
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    filename = f"photo_{ts}{safe_ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    try:
+        with open(filepath, "wb") as out:
+            content = await file.read()
+            out.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    # Expose via mounted static path
+    public_url = f"/uploads/{filename}"
+    return {"url": public_url, "filename": filename}
 
 
 if __name__ == "__main__":
